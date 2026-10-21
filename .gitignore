@@ -1,0 +1,7 @@
+.idea/
+demand
+demand_extracted_wavs
+dev-clean
+__pycache__/
+processed_dataset
+*.pth
