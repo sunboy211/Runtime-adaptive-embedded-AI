@@ -3,7 +3,7 @@
 This repository contains the source code for the MSc thesis: **"Runtime-adaptive embedded AI systems for resource-constrained edge devices"**.
 
 ## 📌 Project Overview
-Briefly describe what your thesis is about here. (e.g., This project focuses on implementing adaptive AI models that can dynamically adjust their computational complexity based on the real-time resource constraints of edge hardware...)
+This project investigates runtime-adaptive embedded AI systems for resource-constrained edge devices. Unlike conventional TinyML deployments with fixed models, the focus is on enabling AI systems to dynamically adapt their inference behavior according to available resources and changing operating conditions.
 
 ## 📁 Repository Structure
 ```text
@@ -19,11 +19,13 @@ Briefly describe what your thesis is about here. (e.g., This project focuses on 
 Ensure you have the following environment installed:
 * Python 3.8+
 * PyTorch 1.10+
-* (Add other dependencies here, e.g., numpy, torchvision...)
+* torchaudio
+* Numpy
+* torchmetrics
 
 ### 2. Dataset Preparation
 > ⚠️ **Note:** Due to GitHub's file size limits, the raw datasets and trained model weights are excluded from this repository.
-* Please download the required dataset from `[Insert Link Here, e.g., Kaggle/Google Drive]`.
+* Please download the required dataset from `demand`.
 * Extract and place the dataset folder (e.g., `train_snr_15/`) directly in the project root directory.
 
 ### 3. Running the Code
