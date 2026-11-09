@@ -3,7 +3,6 @@ import io
 import pandas as pd
 import soundfile as sf
 
-# 设置你本地存放 16k parquet 文件的绝对路径（根据你的截图）
 data_dir = r"F:\master thesis\demand\data"
 output_dir = r"F:\master thesis\demand_extracted_wavs"
 os.makedirs(output_dir, exist_ok=True)
@@ -14,24 +13,24 @@ print("Starting local offline extraction of 16k Parquet noise files...")
 for filename in os.listdir(data_dir):
     if filename.startswith("16k") and filename.endswith(".parquet"):
         file_path = os.path.join(data_dir, filename)
-        print(f"📖 Processing file: {filename}")
+        print(f" Processing file: {filename}")
 
         # 读取 parquet 数据集
         df = pd.read_parquet(file_path)
 
         for idx, row in df.iterrows():
-            # 1. 获取噪声场景名称（例如 'DKITCHEN_16k/ch01_00.ogg'）
+            # 获取噪声场景名称
             scene_path = row['name']
             scene_folder = scene_path.split('/')[0]  # 提取出 'DKITCHEN_16k'
 
-            # 2. 直接获取音频的原始二进制字节流 (bytes)
+            # 直接获取音频的原始二进制字节流 (bytes)
             audio_bytes = row['audio']
 
-            # 3. 创建对应的输出文件夹（按场景分类，如 DKITCHEN_16k, OOFFICE_16k）
+            # 创建对应的输出文件夹
             scene_output_dir = os.path.join(output_dir, scene_folder)
             os.makedirs(scene_output_dir, exist_ok=True)
 
-            # 4. 命名并保存为标准的 WAV
+            # 命名并保存为标准的 WAV
             wav_name = os.path.basename(scene_path).replace('.ogg', '.wav')
             wav_output_path = os.path.join(scene_output_dir, wav_name)
 
