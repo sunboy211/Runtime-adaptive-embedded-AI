@@ -11,6 +11,7 @@ This project investigates runtime-adaptive embedded AI systems for resource-cons
 ├── export_noise.py         # Script for noise generation/export
 ├── mix_dataset.py          # Data augmentation and dataset mixing
 ├── models.py               # Definition of neural network architectures
+├── mapek.py                # MAPE-K framework
 └── README.md               # Project documentation (this file)
 ```
 ## 🚀 Getting Started
