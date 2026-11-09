@@ -142,7 +142,7 @@ def evaluate_audio_quality_dnsmos(model, test_loader, device):
         """
 
     print("\n Begin calculating test set metrics using the Microsoft DNSMOS model...")
-    print("Note: If this is the first time running, torchmetrics will automatically download the ONNX model weight files from the official server.")
+    print("\n Note: If this is the first time running, torchmetrics will automatically download the ONNX model weight files from the official server.")
 
     with torch.no_grad():
         for noisy_features, noisy_phase, _ in test_loader:
@@ -185,14 +185,14 @@ def evaluate_audio_quality_dnsmos(model, test_loader, device):
 
             except Exception as e:
                 import traceback
-                print(f"\n [ERROR] 运行至第 {count + 1} 条音频时崩了！")
-                print(f"当前一维输入形状 wav_noisy_1d shape: {list(wav_noisy_1d.shape)}")
+                print(f"\n [ERROR] occurs at {count + 1}")
+                print(f" wav_noisy_1d shape: {list(wav_noisy_1d.shape)}")
                 traceback.print_exc()
                 continue
     # 计算并输出平均分
     if count > 0:
         avg_scores = {k: v / count for k, v in scores.items()}
-        print(f"\n DNSMOS 评估完成！共成功处理 {count} 条音频。")
+        print(f"\n DNSMOS evaluation done! In total {count} audios.")
         print(f"==================================================")
         print(
             f"[noisy baseline] SIG: {avg_scores['noisy_sig']:.3f} | BAK: {avg_scores['noisy_bak']:.3f} | OVRL: {avg_scores['noisy_ovrl']:.3f}")
@@ -201,7 +201,7 @@ def evaluate_audio_quality_dnsmos(model, test_loader, device):
         print(f"==================================================")
         return avg_scores
     else:
-        print(" No audio was successfully evaluated; please check the input or verify that DNSMOS has been initialized correctly.")
+        print(" [ERROR] No audio was successfully evaluated; please check the input or verify that DNSMOS has been initialized correctly.")
         return None
 
 if __name__ == '__main__':

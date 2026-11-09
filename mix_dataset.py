@@ -34,10 +34,10 @@ def start_mixing():
     noise_files = sorted(glob.glob(os.path.join(NOISE_DIR, "**/*.wav"), recursive=True))
 
     if not clean_files:
-        print(f"Error：在路径下未找到 .flac 文件，请检查：{CLEAN_DIR}")
+        print(f"Error: Not found clean .flac file, please check {CLEAN_DIR}")
         return
     if not noise_files:
-        print(f"Error：在路径下未找到噪声 .wav 文件，请检查：{NOISE_DIR}")
+        print(f"Error: Not found noisy .wav files, please check {NOISE_DIR}")
         return
 
     print(f"Loaded {len(clean_files)} clean files and {len(noise_files)} noise files.")
@@ -47,7 +47,7 @@ def start_mixing():
     for idx, clean_path in enumerate(clean_files[:200]):  # 先拿前200条跑通全流程
         clean_data, sr = sf.read(clean_path)
         if sr != TARGET_SR:
-            print(f" 跳过：索引 {idx} 的文件 {os.path.basename(clean_path)} 采样率是 {sr}Hz，不是 16000Hz！")
+            print(f" Skip: index {idx} file name {os.path.basename(clean_path)} sampling rate {sr}Hz, not 16000Hz!")
             continue  # 确保采样率一致
 
         # 随机或轮询挑选一个噪声文件
