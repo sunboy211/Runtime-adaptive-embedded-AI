@@ -21,7 +21,7 @@ for filename in os.listdir(data_dir):
         for idx, row in df.iterrows():
             # 获取噪声场景名称
             scene_path = row['name']
-            scene_folder = scene_path.split('/')[0]  # 提取出 'DKITCHEN_16k'
+            scene_folder = scene_path.split('/')[0]
 
             # 直接获取音频的原始二进制字节流 (bytes)
             audio_bytes = row['audio']
@@ -41,6 +41,6 @@ for filename in os.listdir(data_dir):
                 # 强制写入本地为标准的 16kHz WAV 文件
                 sf.write(wav_output_path, audio_data, sample_rate)
             except Exception as e:
-                print(f"⚠️ Warning: Failed to decode {scene_path}, error: {e}")
+                print(f" Warning: Failed to decode {scene_path}, error: {e}")
 
 print(f"\n Done! All 16k noises are now standard WAV files in: {output_dir}")
