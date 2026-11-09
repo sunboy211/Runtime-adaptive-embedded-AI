@@ -9,28 +9,23 @@ os.makedirs(output_dir, exist_ok=True)
 
 print("Starting local offline extraction of 16k Parquet noise files...")
 
-# 遍历文件夹里所有剩下的 16k parquet 文件
 for filename in os.listdir(data_dir):
     if filename.startswith("16k") and filename.endswith(".parquet"):
         file_path = os.path.join(data_dir, filename)
         print(f" Processing file: {filename}")
 
-        # 读取 parquet 数据集
         df = pd.read_parquet(file_path)
 
         for idx, row in df.iterrows():
-            # 获取噪声场景名称
             scene_path = row['name']
             scene_folder = scene_path.split('/')[0]
 
             # 直接获取音频的原始二进制字节流 (bytes)
             audio_bytes = row['audio']
 
-            # 创建对应的输出文件夹
             scene_output_dir = os.path.join(output_dir, scene_folder)
             os.makedirs(scene_output_dir, exist_ok=True)
 
-            # 命名并保存为标准的 WAV
             wav_name = os.path.basename(scene_path).replace('.ogg', '.wav')
             wav_output_path = os.path.join(scene_output_dir, wav_name)
 

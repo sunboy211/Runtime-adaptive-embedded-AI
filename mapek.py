@@ -12,7 +12,7 @@ class AcousticWorldModel(nn.Module):
         super(AcousticWorldModel, self).__init__()
 
     def predict_future_energy(self, active_model, current_h_state, init_frame_tensor, lookahead_ms=48, frame_size_ms=16):
-        rollout_steps = int(lookahead_ms / frame_size_ms)  # 48 / 16 = 3 步
+        rollout_steps = int(lookahead_ms / frame_size_ms)
 
         with torch.no_grad():
             # 保护真机实时记忆
@@ -27,7 +27,6 @@ class AcousticWorldModel(nn.Module):
                 # 脑内自回归空转
                 predicted_clean, virtual_h = active_model(virtual_input, h_state=virtual_h)
 
-                # 计算频域谱能量
                 clean_energy = torch.mean(predicted_clean ** 2).item()
 
                 if step == 0:
@@ -52,7 +51,6 @@ class MapekAncController:
         self.STATE_LARGE = 1
         self.current_state = self.STATE_SMALL
 
-        # 核心超参数配置 (已在算法层面量化为离散帧数)
         self.ENTER_THRESHOLD = 3.2
         self.WAKE_CHECK_THRESHOLD = 2.2
         self.EXIT_THRESHOLD = 2.0
@@ -85,7 +83,6 @@ class MapekAncController:
         """
         num_frames = noisy_spec.shape[0]
 
-        # 初始化与输入规格完全一致的 PyTorch 输出张量
         output_spec = torch.zeros_like(noisy_spec, device=self.device)
         state_history = np.zeros(num_frames)
         energy_history = np.zeros(num_frames)
@@ -273,7 +270,7 @@ def plot_mapek_analysis(noisy_wav_path, cleaned_wav, history, plot_save_path, sr
 # 开始实验mape-k
 if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"当前使用的硬件设备: {device}")
+    print(f"Currently used hardware device: {device}")
     Adapt_DATA_DIR="F:/master thesis/processed_dataset/test_adaptive_mutation"
     OUTPUT_DIR = os.path.join(Adapt_DATA_DIR, "mapek_outputs")
     PLOT_DIR = os.path.join(OUTPUT_DIR, "plots")
@@ -299,12 +296,12 @@ if __name__ == '__main__':
         device=device
     )
     wav_files = glob.glob(os.path.join(Adapt_DATA_DIR, "*.wav"))
-    print(f"成功在目标路径下检索到 {len(wav_files)} 个音频文件。")
+    print(f"Successfully retrieved {len(wav_files)} audio file(s) from the target path.")
     for i, wav_path in enumerate(wav_files):
         controller.reset_stream_states()
         file_name = os.path.basename(wav_path)
         base_name = os.path.splitext(file_name)[0]
-        print(f"\n[{i + 1}/{len(wav_files)}] 正在提取特征: {file_name}...")
+        print(f"\n[{i + 1}/{len(wav_files)}] Extracting features: {file_name}...")
         mag_256, phase_256 = extract_features_aligned(wav_path, dataset_helper)
 
         output_spec, history = controller.process_audio_stream(mag_256)
@@ -316,5 +313,5 @@ if __name__ == '__main__':
         plot_mapek_analysis(wav_path, cleaned_wav, history, save_plot_path)
 
         large_ratio = np.mean(history["state"]) * 100
-        print(f"处理完成: {file_name} | 大模型激活占比: {large_ratio:.1f}%")
+        print(f" Finish: {file_name} | Activation ratio of large models: {large_ratio:.1f}%")
 

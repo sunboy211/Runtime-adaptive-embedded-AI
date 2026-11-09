@@ -26,10 +26,8 @@ class AudioDenoisingDataset(Dataset):
 
     def _process_audio(self, file_path):
         """ 使用 soundfile 原生读取，在 NumPy 层面严格强制单声道 """
-        # 直接从硬盘读取为 NumPy 矩阵
         raw_data, sr = sf.read(file_path)
 
-        # 在安全稳定的 NumPy 层面直接压平多通道，杜绝转置引发的维度颠倒灾难
         if raw_data.ndim > 1:
             # 如果通道数在最后一维 (如 [Samples, Channels])，沿着轴 1 求均值
             raw_data = np.mean(raw_data, axis=1)
@@ -69,9 +67,9 @@ class AudioDenoisingDataset(Dataset):
         clean_mag, _ = self._process_audio(clean_path)
 
         assert noisy_mag.shape == clean_mag.shape, \
-            f"物理长度冲突错误！\n带噪音频: {noisy_path} (形状: {noisy_mag.shape})\n干净音频: {clean_path} (形状: {clean_mag.shape})"
+            f" length error! \n noisy audio: {noisy_path} (shape: {noisy_mag.shape})\n clean audio: {clean_path} (shape: {clean_mag.shape})"
 
-        # 返回三个张量：带噪幅度、带噪相位、干净幅度
+        # 三个张量：带噪幅度、带噪相位、干净幅度
         return noisy_mag, noisy_phase, clean_mag
 
 
@@ -84,7 +82,7 @@ def denoising_collate_fn(batch):
 
 
 def eval_collate_fn(batch):
-    # 确保 batch 里面只有 1 条音频数据（因为 eval_test_loader 的 batch_size=1）
+    # 确保 batch 里面只有 1 条音频数据（eval_test_loader 的 batch_size=1）
     noisy_mag, noisy_phase, clean_mag = batch[0]
 
     # 增加 Batch 维度，变成模型和评测所需要的 [1, Time_Frames, 256]
@@ -143,8 +141,8 @@ def evaluate_audio_quality_dnsmos(model, test_loader, device):
         return istft_transform(complex_spec)
         """
 
-    print("\n 开始通过 Microsoft DNSMOS 模型计算测试集指标...")
-    print("提示：如果是首次运行，torchmetrics 会自动从官方服务器下载 ONNX 模型权重文件。")
+    print("\n Begin calculating test set metrics using the Microsoft DNSMOS model...")
+    print("Note: If this is the first time running, torchmetrics will automatically download the ONNX model weight files from the official server.")
 
     with torch.no_grad():
         for noisy_features, noisy_phase, _ in test_loader:
@@ -160,16 +158,11 @@ def evaluate_audio_quality_dnsmos(model, test_loader, device):
 
             wav_noisy = to_waveform_by_phase(noisy_features, noisy_phase)
             wav_denoised = to_waveform_by_phase(denoised_features, noisy_phase)
-            """
-            print(f"张量的几何维度（几维）: {wav_noisy.ndim} 维")
-            print(f"张量的精确形状 (Shape)  : {list(wav_noisy.shape)}")
-            print(f"张量的几何维度（几维）: {wav_denoised.ndim} 维")
-            print(f"张量的精确形状 (Shape)  : {list(wav_denoised.shape)}")
-            """
+
             wav_noisy_1d = wav_noisy.squeeze()
             wav_denoised_1d = wav_denoised.squeeze()
             if wav_noisy_1d.ndim == 0 or wav_noisy_1d.shape[0] == 0:
-                print(f" 跳过第 {count + 1} 条音频：长度异常为 0")
+                print(f" skip {count + 1} audio: length is 0")
                 continue
 
             min_samples = 64000
@@ -181,7 +174,6 @@ def evaluate_audio_quality_dnsmos(model, test_loader, device):
                 res_noisy = dnsmos(wav_noisy_1d, fs=16000, personalized=False, device=device)
                 res_denoised = dnsmos(wav_denoised_1d, fs=16000, personalized=False, device=device)
 
-                # 根据源码对应的索引提取对应分数的标量值：
                 # 索引 1 是 SIG, 索引 2 是 BAK, 索引 3 是 OVRL
                 scores['noisy_sig'] += res_noisy[1].item()
                 scores['denoised_sig'] += res_denoised[1].item()
@@ -203,18 +195,18 @@ def evaluate_audio_quality_dnsmos(model, test_loader, device):
         print(f"\n DNSMOS 评估完成！共成功处理 {count} 条音频。")
         print(f"==================================================")
         print(
-            f"【带噪基准】 SIG: {avg_scores['noisy_sig']:.3f} | BAK: {avg_scores['noisy_bak']:.3f} | OVRL: {avg_scores['noisy_ovrl']:.3f}")
+            f"[noisy baseline] SIG: {avg_scores['noisy_sig']:.3f} | BAK: {avg_scores['noisy_bak']:.3f} | OVRL: {avg_scores['noisy_ovrl']:.3f}")
         print(
-            f"【模型降噪】 SIG: {avg_scores['denoised_sig']:.3f} | BAK: {avg_scores['denoised_bak']:.3f} | OVRL: {avg_scores['denoised_ovrl']:.3f}")
+            f"[denoised baseline] SIG: {avg_scores['denoised_sig']:.3f} | BAK: {avg_scores['denoised_bak']:.3f} | OVRL: {avg_scores['denoised_ovrl']:.3f}")
         print(f"==================================================")
         return avg_scores
     else:
-        print(" 未成功评估任何音频，请检查输入或 dnsmos 初始化是否正确。")
+        print(" No audio was successfully evaluated; please check the input or verify that DNSMOS has been initialized correctly.")
         return None
 
 if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"当前检测到的硬件加速设备: {device}")
+    print(f"Currently detected hardware acceleration device: {device}")
 
     # 大模型
     NOISY_DATA_DIR = "F:/master thesis/processed_dataset/train_snr_0"
@@ -240,11 +232,10 @@ if __name__ == '__main__':
         if os.path.exists(target_noisy_path):
             paired_dataset_files.append((target_noisy_path, clean_path))
 
-    print(f"\n--- 物理对齐绑定检查 ---")
-    print(f"成功严格绑定并对齐的音频对总数: {len(paired_dataset_files)}")
+    print(f"Total number of successfully and strictly bound and aligned audio pairs: {len(paired_dataset_files)}")
     for i in range(min(2, len(paired_dataset_files))):
         n_p, c_p = paired_dataset_files[i]
-        print(f"绑定对 [{i}]: {os.path.basename(n_p)} 🔗 {os.path.basename(c_p)}")
+        print(f"bound pairs [{i}]: {os.path.basename(n_p)} 🔗 {os.path.basename(c_p)}")
     print("------------------------------------------\n")
 
     split_idx = int(len(paired_dataset_files) * 0.8)
@@ -259,9 +250,8 @@ if __name__ == '__main__':
     eval_test_loader= DataLoader(val_dataset, batch_size=1, shuffle=False, collate_fn=eval_collate_fn)
 
     X_noisy, Y_clean = next(iter(train_loader))
-    print("----- 恭喜！成对数据流打通成功！-------")
-    print("输入带噪 Batch 形状 (X):", X_noisy.shape)
-    print("目标干净 Batch 形状 (Y):", Y_clean.shape)
+    print("input noisy Batch shape:", X_noisy.shape)
+    print("targeted clean Batch shape:", Y_clean.shape)
 
 
     input_dim = 256
@@ -269,18 +259,18 @@ if __name__ == '__main__':
     if MODEL_TYPE == "LARGE":
         current_model = TinyAudioGRU(input_dim, hidden_dim=128, num_layers=3).to(device)
         current_model_path = "model_large_best.pth"
-        print(" 当前激活任务：训练【大模型】(hidden_dim=128, layers=3)")
+        print(" Currently active task: Training [large model] (hidden_dim=16, layers=1)")
     else:
         current_model = TinyAudioGRU(input_dim, hidden_dim=16, num_layers=1).to(device)
         current_model_path = "model_small_best.pth"
-        print(" 当前激活任务：训练【小模型】(hidden_dim=16, layers=1)")
+        print(" Currently active task: Training [small model] (hidden_dim=16, layers=1)")
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(current_model.parameters(), lr=0.001)
 
     num_epochs = 40 # 针对200对数据
     best_val_loss = float('inf')
-    print(f"\n 开始在 GPU ({device}) 上执行训练任务...")
+    print(f"\n Start training...")
 
     for epoch in range(num_epochs):
         current_model.train()
@@ -328,8 +318,8 @@ if __name__ == '__main__':
         if epoch_val_loss < best_val_loss:
             best_val_loss = epoch_val_loss
             torch.save(current_model.state_dict(), current_model_path)
-            print(f" 发现更好的模型！验证集 Loss 降至 {best_val_loss:.6f}，权重已保存。")
+            print(f" Found a better model! Validation loss dropped to {best_val_loss:.6f}; weights have been saved.")
 
-    print(" 训练与验证完全结束！")
+    print(" end of validation and evaluation！")
     current_model.load_state_dict(torch.load(current_model_path))
     evaluate_audio_quality_dnsmos(current_model, eval_test_loader, device)
