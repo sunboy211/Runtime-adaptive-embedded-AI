@@ -104,7 +104,7 @@ class TinyAudioGRU(nn.Module):
         return noisy_input * mask, next_h_state
 
 
-def evaluate_audio_quality_dnsmos(model, test_loader, device):
+def evaluate_audio_quality_dnsmos(model, test_loader, device, model_type):
     """
     使用 DNSMOS 指标评估降噪模型（SIG、BAK、OVRL）
     Speech signal quality, Background noise quality, Overall speech quality
@@ -153,7 +153,8 @@ def evaluate_audio_quality_dnsmos(model, test_loader, device):
             # 前向传播，得到降噪后的频谱
             denoised_features, _ = model(noisy_features, h_state=None)
             # 补偿性 保留 15% 的自然底噪
-            if MODEL_TYPE == "SMALL":
+
+            if model_type == "SMALL":
                 denoised_features = 0.85 * denoised_features + 0.15 * noisy_features
 
             wav_noisy = to_waveform_by_phase(noisy_features, noisy_phase)
@@ -204,23 +205,24 @@ def evaluate_audio_quality_dnsmos(model, test_loader, device):
         print(" [ERROR] No audio was successfully evaluated; please check the input or verify that DNSMOS has been initialized correctly.")
         return None
 
+
 if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Currently detected hardware acceleration device: {device}")
 
     # 大模型
-    NOISY_DATA_DIR = "F:/master thesis/processed_dataset/train_snr_0"
-    MODEL_TYPE = "LARGE"
+    #NOISY_DATA_DIR = "F:/master thesis/processed_dataset/train_snr_0"
+    #MODEL_TYPE = "LARGE"
 
     # 小模型
-    #NOISY_DATA_DIR = "F:/master thesis/processed_dataset/train_snr_10"
-    #MODEL_TYPE = "SMALL"
+    NOISY_DATA_DIR = "F:/master thesis/processed_dataset/train_snr_10"
+    MODEL_TYPE = "SMALL"
 
     CLEAN_DATA_DIR = "F:/master thesis/dev-clean/LibriSpeech/dev-clean"
 
     # 严格复刻合成逻辑获取干净音频
     raw_clean_files = sorted(glob.glob(os.path.join(CLEAN_DATA_DIR, "**/*.flac"), recursive=True))
-    base_clean_files = raw_clean_files[:200]
+    base_clean_files = raw_clean_files[:2000] # 记得改
 
     # 直接构建强绑定的元组列表
     paired_dataset_files = []
@@ -259,7 +261,7 @@ if __name__ == '__main__':
     if MODEL_TYPE == "LARGE":
         current_model = TinyAudioGRU(input_dim, hidden_dim=128, num_layers=3).to(device)
         current_model_path = "model_large_best.pth"
-        print(" Currently active task: Training [large model] (hidden_dim=16, layers=1)")
+        print(" Currently active task: Training [large model] (hidden_dim=128, layers=3)")
     else:
         current_model = TinyAudioGRU(input_dim, hidden_dim=16, num_layers=1).to(device)
         current_model_path = "model_small_best.pth"
@@ -268,7 +270,7 @@ if __name__ == '__main__':
     criterion = nn.MSELoss()
     optimizer = optim.Adam(current_model.parameters(), lr=0.001)
 
-    num_epochs = 40 # 针对200对数据
+    num_epochs = 50
     best_val_loss = float('inf')
     print(f"\n Start training...")
 
@@ -321,5 +323,6 @@ if __name__ == '__main__':
             print(f" Found a better model! Validation loss dropped to {best_val_loss:.6f}; weights have been saved.")
 
     print(" end of validation and evaluation！")
+
     current_model.load_state_dict(torch.load(current_model_path))
-    evaluate_audio_quality_dnsmos(current_model, eval_test_loader, device)
+    evaluate_audio_quality_dnsmos(current_model, eval_test_loader, device, model_type=MODEL_TYPE)

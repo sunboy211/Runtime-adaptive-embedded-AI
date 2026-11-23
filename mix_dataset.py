@@ -44,7 +44,7 @@ def start_mixing():
     print("Starting data augmentation and mixing pipeline...")
 
     # 为了防止文件对不齐，这里用循环进行混合
-    for idx, clean_path in enumerate(clean_files[:200]):  # 先拿前200条跑通全流程
+    for idx, clean_path in enumerate(clean_files[:2000]):  # 先拿前200条跑通全流程
         clean_data, sr = sf.read(clean_path)
         if sr != TARGET_SR:
             print(f" Skip: index {idx} file name {os.path.basename(clean_path)} sampling rate {sr}Hz, not 16000Hz!")
@@ -54,7 +54,7 @@ def start_mixing():
         noise_path = noise_files[idx % len(noise_files)]
         noise_data, n_sr = sf.read(noise_path)
 
-        # 2. 长度对齐处理 (时域裁剪或填充)
+        # 长度对齐处理 (时域裁剪或填充)
         if len(noise_data) < len(clean_data):
             # 如果噪声太短，通过循环平铺（Tile）将其加长
             repeats = math.ceil(len(clean_data) / len(noise_data))
@@ -62,7 +62,7 @@ def start_mixing():
         # 截取与人声完全相同长度的噪声
         noise_slice = noise_data[:len(clean_data)]
 
-        # 3. 生成常规的固定 SNR 训练集
+        # 生成常规的固定 SNR 训练集
         for snr in SNR_LEVELS:
             scale = calculate_snr_scale(clean_data, noise_slice, target_snr=snr)
             mixed_data = clean_data + scale * noise_slice
@@ -78,15 +78,26 @@ def start_mixing():
             out_path = os.path.join(OUTPUT_DIR, f"train_snr_{snr}", file_name)
             sf.write(out_path, mixed_data, TARGET_SR)
 
-        # 4. 手工合成一段“噪声突变”的音频 为了MAPE-K loop
-        if idx < 10:  # 生成 10 条突变测试音频足够了
-            half_len = len(clean_data) // 2
-            # 前半段：15dB（安静，对应小模型常态运作）
-            scale_quiet = calculate_snr_scale(clean_data[:half_len], noise_slice[:half_len], target_snr=15)
-            # 后半段：突变到 -5dB（极度嘈杂，测试状态机能否在几毫秒内测出能量变化并切到大模型）
-            scale_loud = calculate_snr_scale(clean_data[half_len:], noise_slice[half_len:], target_snr=-5)
+        # 手工合成一段“噪声突变”的音频 为了MAPE-K loop 测试
+        if idx < 10:
+            one_third = len(clean_data) // 3
+            two_thirds = 2 * one_third
 
-            mutation_noise = np.concatenate([scale_quiet * noise_slice[:half_len], scale_loud * noise_slice[half_len:]])
+            scale_quiet_1 = calculate_snr_scale(
+                clean_data[:one_third], noise_slice[:one_third], target_snr=15
+            )
+            scale_loud = calculate_snr_scale(
+                clean_data[one_third:two_thirds], noise_slice[one_third:two_thirds], target_snr=-5
+            )
+            scale_quiet_2 = calculate_snr_scale(
+                clean_data[two_thirds:], noise_slice[two_thirds:], target_snr=15
+            )
+
+            mutation_noise = np.concatenate([
+                scale_quiet_1 * noise_slice[:one_third],
+                scale_loud * noise_slice[one_third:two_thirds],
+                scale_quiet_2 * noise_slice[two_thirds:]
+            ])
             mutated_audio = clean_data + mutation_noise
 
             # 归一化

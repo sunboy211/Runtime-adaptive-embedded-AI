@@ -11,7 +11,7 @@ class AcousticWorldModel(nn.Module):
     def __init__(self):
         super(AcousticWorldModel, self).__init__()
 
-    def predict_future_energy(self, active_model, current_h_state, init_frame_tensor, lookahead_ms=48, frame_size_ms=16):
+    def estimate_noise_severity(self, active_model, current_h_state, init_frame_tensor, lookahead_ms=48, frame_size_ms=16):
         rollout_steps = int(lookahead_ms / frame_size_ms)
 
         with torch.no_grad():
@@ -21,7 +21,8 @@ class AcousticWorldModel(nn.Module):
             # 初始虚拟输入采用当前帧的真实特征，而非盲目的全 0
             virtual_input = init_frame_tensor.clone()
             init_energy = torch.mean(init_frame_tensor ** 2).item()
-            future_energies = []
+            future_noise_energies = []
+            estimated_noise_floor = 0.0
 
             for step in range(rollout_steps):
                 # 脑内自回归空转
@@ -30,14 +31,15 @@ class AcousticWorldModel(nn.Module):
                 clean_energy = torch.mean(predicted_clean ** 2).item()
 
                 if step == 0:
+                    # 剥离人声：总能量 - 预测纯净语音能量 = 纯噪声能量
                     estimated_noise_floor = max(0.0, init_energy - clean_energy)
-                predicted_total_energy = clean_energy + estimated_noise_floor * (0.9 ** step)
-                future_energies.append(predicted_total_energy)
+                predicted_noise_energy = estimated_noise_floor * (0.92 ** step)
+                future_noise_energies.append(predicted_noise_energy)
 
                 # 自回归特征传递
                 virtual_input = init_frame_tensor.detach()
 
-        return np.mean(future_energies)
+        return estimated_noise_floor, np.mean(future_noise_energies)
 
 
 class MapekAncController:
@@ -51,17 +53,24 @@ class MapekAncController:
         self.STATE_LARGE = 1
         self.current_state = self.STATE_SMALL
 
-        self.ENTER_THRESHOLD = 3.2
-        self.WAKE_CHECK_THRESHOLD = 2.2
-        self.EXIT_THRESHOLD = 2.0
-        self.HOLD_TIME_MS = 320
+        self.NOISE_ENTER_THRESHOLD = 1.5
+        self.WAKE_CHECK_THRESHOLD = 1.0
+        self.NOISE_EXIT_THRESHOLD = 0.8
+
+        self.ATTACK_FRAMES = 3    # 连续 3 帧 (48ms) 噪声超标才升档
+        self.HOLD_TIME_MS = 800
+        self.COOLDOWN_TIME_MS = 480  # 降档后冷静 480ms (30帧)，防止乒乓抖动
         self.FADE_TIME_MS = 96    # Raised from 32ms to 96ms for the low-power single-model output smooth smoothing.
         # A 32ms window is too abrupt for zero-state initialization and causes pops.
 
-        self.hold_max_frames = int(self.HOLD_TIME_MS / 16)  # 320ms / 16ms = 20 帧
-        self.fade_max_frames = int(self.FADE_TIME_MS / 16)  # 96ms / 16ms = 6 帧
+        self.hold_max_frames = int(self.HOLD_TIME_MS / 16)
+        self.cooldown_max_frames = int(self.COOLDOWN_TIME_MS / 16)
+        self.fade_max_frames = int(self.FADE_TIME_MS / 16)
 
+        self.attack_counter = 0
         self.hold_counter = 0
+        self.cooldown_counter = 0
+        self.ema_noise_energy = 0.0
         self.h_small = None
         self.h_large = None
 
@@ -69,7 +78,10 @@ class MapekAncController:
         self.h_small = None
         self.h_large = None
         self.current_state = self.STATE_SMALL
+        self.attack_counter = 0
         self.hold_counter = 0
+        self.cooldown_counter = 0
+        self.ema_noise_energy = 0.0
 
     def _run_small_model(self, frame_tensor):
         """统一小模型推理与直通混音逻辑，消除过渡期结束时的底噪阶跃爆音"""
@@ -86,7 +98,7 @@ class MapekAncController:
         output_spec = torch.zeros_like(noisy_spec, device=self.device)
         state_history = np.zeros(num_frames)
         energy_history = np.zeros(num_frames)
-        trend_history = np.zeros(num_frames)
+        noise_trend_history = np.zeros(num_frames)
 
         fade_idx = 0
         is_fading = False
@@ -99,63 +111,77 @@ class MapekAncController:
 
             # --- 1. M (Monitor) 阶段：计算当前帧基础能量（极低开销） ---
             current_energy = torch.mean(frame_tensor ** 2).item()
-            future_trend = 0.0  # 默认不预测，静默状态下置 0
+
+            current_noise_est = 0.0
+            future_noise_trend = 0.0
 
             # --- 2. P (Plan) 阶段：极致节能状态机与条件式算力唤醒 ---
             if self.current_state == self.STATE_SMALL:
+                if self.cooldown_counter > 0:
+                    self.cooldown_counter -= 1
                 # 极致节能核心门控：当前能量大于唤醒检查阈值时，才调用世界模型
                 if current_energy > self.WAKE_CHECK_THRESHOLD:
-                    with torch.no_grad():
-                        future_trend = self.world_model.predict_future_energy(
+                        current_noise_est, future_noise_trend = self.world_model.estimate_noise_severity(
                             self.model_small, self.h_small, frame_tensor
                         )
+                self.ema_noise_energy = 0.7 * self.ema_noise_energy + 0.3 * future_noise_trend
 
                 # 满足双重超标条件，决定升级为大模型
-                if current_energy > self.ENTER_THRESHOLD and future_trend > self.ENTER_THRESHOLD:
-                    self.current_state = self.STATE_LARGE
-                    is_fading = True
-                    fade_idx = 0
-                    fade_direction = 'S2B'
-                    self.h_large = None
-                    self.hold_counter = self.hold_max_frames
+                if self.cooldown_counter == 0 and self.ema_noise_energy > self.NOISE_ENTER_THRESHOLD:
+                    self.attack_counter += 1
+                    if self.attack_counter >= self.ATTACK_FRAMES:
+                        self.current_state = self.STATE_LARGE
+                        is_fading = True
+                        fade_idx = 0
+                        fade_direction = 'S2B'
+                        self.h_large = None
+                        self.hold_counter = self.hold_max_frames
+                        self.attack_counter = 0
+                else:
+                    self.attack_counter = max(0, self.attack_counter-1)
 
             elif self.current_state == self.STATE_LARGE:
-                if current_energy >= self.EXIT_THRESHOLD:
+                # 在大模型模式下，同样利用大小模型差异或简化能量估算当前噪声
+                if f % 2 == 0:
+                    with torch.no_grad():
+                        temp_clean, _ = self.model_small(frame_tensor, self.h_small)
+                        clean_e = torch.mean(temp_clean ** 2).item()
+                        current_noise_est = max(0.0, current_energy - clean_e)
+                        self.ema_noise_energy = 0.7 * self.ema_noise_energy + 0.3 * current_noise_est
+
+                # future_noise_trend = self.ema_noise_energy
+
+                if self.ema_noise_energy >= self.NOISE_EXIT_THRESHOLD:
                     self.hold_counter = self.hold_max_frames
                 else:
-                    if self.hold_counter > 0:
-                        self.hold_counter -= 1
+                    self.hold_counter -= 1
 
-                # 满足噪声消退且过了 Hold Time，切回小模型
+                # 噪声真正消退并维持了 HOLD_TIME 后，切回小模型
                 if self.hold_counter <= 0:
                     self.current_state = self.STATE_SMALL
                     is_fading = True
                     fade_idx = 0
                     fade_direction = 'B2S'
-                    self.h_small = None
+                    self.h_small = None  # 清除过期记忆，配合 96ms 交叉淡入实现无爆音重启
+                    self.cooldown_counter = self.cooldown_max_frames
 
-            # --- 3. A & E (Analyze & Execute) 阶段：无冗余的声学交叉淡入淡出 ---
+            # --- 3. Execute (E): 交叉淡入淡出执行 ---
             with torch.no_grad():
                 if is_fading:
                     fade_idx += 1
                     w_new = fade_idx / self.fade_max_frames
 
-                    # 过渡期仅在此处让两个模型各自运行一次，解决前后帧错位和重复推理问题
                     out_small = self._run_small_model(frame_tensor)
-
                     out_big, self.h_large = self.model_large(frame_tensor, self.h_large)
-
 
                     if fade_direction == 'S2B':
                         output_frame = (1.0 - w_new) * out_small + w_new * out_big
                     else:
                         output_frame = (1.0 - w_new) * out_big + w_new * out_small
 
-
                     if fade_idx >= self.fade_max_frames:
                         is_fading = False
                 else:
-                    # 常态运行：严格的单模型极致执行，大模型在小模型常态下完全无算力消耗
                     if self.current_state == self.STATE_LARGE:
                         output_frame, self.h_large = self.model_large(frame_tensor, self.h_large)
                     else:
@@ -165,14 +191,14 @@ class MapekAncController:
             output_spec[f] = output_frame.view(256)
             state_history[f] = self.current_state
             energy_history[f] = current_energy
-            trend_history[f] = future_trend
+            noise_trend_history[f] = self.ema_noise_energy
 
         history = {
             "state": state_history,
             "energy": energy_history,
-            "trend": trend_history,
-            "enter_threshold": self.ENTER_THRESHOLD,
-            "exit_threshold": self.EXIT_THRESHOLD,
+            "trend": noise_trend_history,
+            "enter_threshold": self.NOISE_ENTER_THRESHOLD,
+            "exit_threshold": self.NOISE_EXIT_THRESHOLD,
             "wake_threshold": self.WAKE_CHECK_THRESHOLD
         }
         return output_spec.cpu(), history
@@ -223,38 +249,44 @@ def plot_mapek_analysis(noisy_wav_path, cleaned_wav, history, plot_save_path, sr
     min_len = min(len(noisy_wav), len(cleaned_wav))
     noisy_wav = noisy_wav[:min_len]
     cleaned_wav = cleaned_wav[:min_len]
-    time_wav = np.arange(min_len) / sr
+    # time_wav = np.arange(min_len) / sr
 
     # 帧时间轴 (16ms/帧)
     num_frames = len(history["state"])
     time_frames = np.arange(num_frames) * 0.016
 
+    VMIN, VMAX = -100, -20
+
     fig, axes = plt.subplots(4, 1, figsize=(12, 10), sharex=True, gridspec_kw={'height_ratios': [1, 1, 1.2, 0.8]})
 
-    # 1. 原始带噪波形
-    axes[0].plot(time_wav, noisy_wav, color='#7f8c8d', linewidth=0.6)
-    axes[0].set_ylabel("Amplitude")
+    # 原始带噪
+    axes[0].specgram(noisy_wav, NFFT=512, Fs=16000, noverlap=256, cmap='magma', vmin=VMIN, vmax=VMAX)
+    axes[0].set_ylabel("Freq (Hz)")
     axes[0].set_title(f"MAPE-K ANC: {os.path.basename(noisy_wav_path)}", fontsize=13, fontweight='bold')
-    axes[0].legend(["original noisy audio (Noisy)"], loc="upper right")
+    axes[0].text(0.015, 0.88, "Noisy Audio Spectrogram", transform=axes[0].transAxes,
+              color="white", fontsize=10, fontweight="bold",
+              bbox=dict(facecolor="black", alpha=0.6, edgecolor="none", pad=3))
     axes[0].grid(True, alpha=0.3)
 
-    # 2. 降噪后波形
-    axes[1].plot(time_wav, cleaned_wav, color='#2980b9', linewidth=0.6)
-    axes[1].set_ylabel("Amplitude")
-    axes[1].legend(["MAPE-K denoising output (Denoised)"], loc="upper right")
+    # 降噪后
+    axes[1].specgram(cleaned_wav, NFFT=512, Fs=16000, noverlap=256, cmap='magma', vmin=VMIN, vmax=VMAX)
+    axes[1].set_ylabel("Freq (Hz)")
+    axes[1].text(0.015, 0.88, "MAPE-K Denoised Audio Spectrogram", transform=axes[1].transAxes,
+              color="white", fontsize=10, fontweight="bold",
+              bbox=dict(facecolor="black", alpha=0.6, edgecolor="none", pad=3))
     axes[1].grid(True, alpha=0.3)
 
-    # 3. 能量监测与世界模型预测趋势
+    # 能量监测与世界模型预测趋势
     axes[2].plot(time_frames, history["energy"], label="Current Energy", color='#2c3e50', linewidth=1.2)
-    axes[2].plot(time_frames, history["trend"], label="Future Trend", color='#e67e22', linestyle='--', linewidth=1.2)
-    axes[2].axhline(history["enter_threshold"], color='#e74c3c', linestyle=':', linewidth=1.2, label=f" ({history['enter_threshold']})")
-    axes[2].axhline(history["exit_threshold"], color='#3498db', linestyle=':', linewidth=1.2, label=f" ({history['exit_threshold']})")
-    axes[2].axhline(history["wake_threshold"], color='#27ae60', linestyle=':', linewidth=1.0, label=f" ({history['wake_threshold']:.2f})")
+    axes[2].plot(time_frames, history["trend"], label="Noise Trend (EMA)", color='#e67e22', linestyle='--', linewidth=1.2)
+    axes[2].axhline(history["enter_threshold"], color='#e74c3c', linestyle=':', linewidth=1.2, label=f" Enter Threshold ({history['enter_threshold']})")
+    axes[2].axhline(history["exit_threshold"], color='#3498db', linestyle=':', linewidth=1.2, label=f" Exit Threshold ({history['exit_threshold']})")
+    axes[2].axhline(history["wake_threshold"], color='#27ae60', linestyle=':', linewidth=1.0, label=f" Wake Threshold ({history['wake_threshold']:.2f})")
     axes[2].set_ylabel("Spectral Energy")
     axes[2].legend(loc="upper right", ncol=2)
     axes[2].grid(True, alpha=0.3)
 
-    # 4. 模型激活状态轨迹 (0=小模型, 1=大模型)
+    # 模型激活状态轨迹 (0=小模型, 1=大模型)
     axes[3].step(time_frames, history["state"], where='post', color='#8e44ad', linewidth=1.8)
     axes[3].fill_between(time_frames, history["state"], step='post', color='#8e44ad', alpha=0.25)
     axes[3].set_yticks([0, 1])
@@ -267,7 +299,6 @@ def plot_mapek_analysis(noisy_wav_path, cleaned_wav, history, plot_save_path, sr
     plt.savefig(plot_save_path, dpi=300)
     plt.close(fig)
 
-# 开始实验mape-k
 if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Currently used hardware device: {device}")
