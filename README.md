@@ -12,6 +12,8 @@ This project investigates runtime-adaptive embedded AI systems for resource-cons
 ├── mix_dataset.py          # Data augmentation and dataset mixing
 ├── models.py               # Definition of neural network architectures
 ├── mapek.py                # MAPE-K framework
+├── static_q.py             # static quantization for STM32U585
+├── ptq.py                  # trial of dynamic ptq (for quality check)
 └── README.md               # Project documentation (this file)
 ```
 ## 🚀 Getting Started
@@ -23,6 +25,10 @@ Ensure you have the following environment installed:
 * torchaudio
 * Numpy
 * torchmetrics
+* onnxruntime & onnxruntime.quantization
+* soundfile
+* matplotlib
+* .....
 
 ### 2. Dataset Preparation
 > ⚠️ **Note:** Due to GitHub's file size limits, the raw datasets and trained model weights are excluded from this repository.
